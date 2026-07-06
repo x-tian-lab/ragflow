@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+index/
+*.pkl
+registry.sqlite
+registry.jsonl
+.env
