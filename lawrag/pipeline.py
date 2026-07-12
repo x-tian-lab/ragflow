@@ -17,14 +17,23 @@ def load_registry(registry_jsonl: str) -> list[dict]:
     return list(recs.values())
 
 
-def apply_manual_layers(recs: list[dict], manual_dates: str | None = None,
-                        manual_ungroup: str | None = None) -> list[dict]:
-    """人工覆盖层(D-26):日期覆盖 + 误归组摘除,与 finalize_registry 保持一致。"""
-    if manual_dates and os.path.exists(manual_dates):
-        md = json.load(open(manual_dates, encoding='utf-8'))
-        for r in recs:
-            if r['file_path'] in md:
-                r['effective_date'] = md[r['file_path']]
+def apply_manual_layers(recs: list[dict], meta_dir: str | None = None) -> list[dict]:
+    """人工覆盖层(D-26 日期 / eval-2026-07-12 标题):meta_dir 下的 manual_*.json,最高优先级。"""
+    if not meta_dir:
+        return recs
+
+    def _load(name):
+        p = os.path.join(meta_dir, name)
+        return json.load(open(p, encoding='utf-8')) if os.path.exists(p) else {}
+
+    md, mt = _load('manual_dates.json'), _load('manual_titles.json')
+    for r in recs:
+        fp = r['file_path'].replace('\\', '/')
+        if fp in md:
+            r['effective_date'] = md[fp]
+        if fp in mt:
+            r['doc_title'] = mt[fp]
+            r['title_source'] = 'manual'
     return recs
 
 

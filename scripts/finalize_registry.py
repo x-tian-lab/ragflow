@@ -11,6 +11,12 @@ recs=list(recs.values())
 # 人工覆盖层(最高优先级, 2026-07-05 用户审查)
 import json as _j
 MAN_D=_j.load(open('/sessions/peaceful-vigilant-hopper/mnt/outputs/manual_dates.json',encoding='utf-8'))
+import os as _o
+_mt='/sessions/peaceful-vigilant-hopper/mnt/metadata_output/manual_titles.json'
+MAN_T=_j.load(open(_mt,encoding='utf-8')) if _o.path.exists(_mt) else {}
+for r in recs:
+    if r['file_path'].replace(chr(92),'/') in MAN_T:
+        r['doc_title']=MAN_T[r['file_path'].replace(chr(92),'/')]; r['title_source']='manual' 
 UNGROUP=set(_j.load(open('/sessions/peaceful-vigilant-hopper/mnt/outputs/manual_ungroup.json',encoding='utf-8')))
 man_applied=0
 for r in recs:

@@ -30,7 +30,7 @@ def get_retriever(kind: str, for_build: bool = False):
 def cmd_index(args):
     from .pipeline import apply_manual_layers, iter_chunks, load_registry
     recs = load_registry(os.path.join(META, 'registry.jsonl'))
-    recs = apply_manual_layers(recs, manual_dates=args.manual_dates)
+    recs = apply_manual_layers(recs, meta_dir=META)
     extra = [os.path.join(META, d) for d in ('law_md', 'xlsx_md')]
     extra = [d for d in extra if os.path.isdir(d)]
     chunks = list(iter_chunks(recs, ROOT, extra_md_dirs=extra))

@@ -12,11 +12,13 @@
 - **五阶段可插拔架构**：Parser → Chunker → Indexer → Retriever → Generator，各阶段独立接口；BM25 与 Dense(bge+Chroma) 检索器即插即换，未来混合检索/reranker 有预留插槽
 - **评测先行**：60 题测试集（55 正题 + 5 拒答题）先于 pipeline 代码存在，引用错 = 判负
 
-## 当前状态（MVP，spec v0.2）
+## 当前状态（MVP，spec v0.2，2026-07-12 评测后）
 
-- 全语料 55,728 chunks，A 级引用占比 93.4%，C 级为零
-- BM25 检索基线：file_hit@5 = 90.9%，条号级 loc_hit@5 = 89.1%，单查 0.2-0.3s
-- Dense（bge-large-zh-v1.5）与 LLM 端到端评测待执行（验收线：准确率 >80%，引用命中 >90%，响应 <5s）
+- 全语料 59,097 chunks，A 级引用占比 94%，C 级为零
+- BM25 检索基线：file_hit@5 = 94.5%，条号级 loc_hit@5 = 92.7%，单查 0.2-0.3s
+- 端到端（BM25 + DeepSeek-chat）：60 题延迟全部 <5s；人工复核修正三类评测误判后估计准确率 ≥81.7%（详见 spec_dev.md 评测记录），待修复版 eval 重跑确认
+- 已修复：拒答标志漏标（拒答语挂无关引用）、cite_ok 结构化比对、判分归一化与数值容差、doc_title 跨段截断
+- Dense（bge-large-zh-v1.5）与混合检索为下一优化项
 
 ## 目录
 

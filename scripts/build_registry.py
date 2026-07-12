@@ -80,10 +80,12 @@ def parse_docx(path):
         for row in tb.rows:
             texts.append(' '.join(clean(c.text) for c in row.cells))
     title = texts[0] if texts else ''
-    # 跨段标题合并:首段很短且不含标点,下一段也像标题延续
-    if title and len(title) <= 10 and len(texts) > 1 and not re.search(r'[。，,.]', title):
+    # 跨段标题合并(eval 2026-07-12 发现2增强):首段无文种后缀且不含标点 => 尝试并入下一段
+    DOC_SUFFIX = ('法','决定','办法','条例','规定','通知','意见','公告','细则','规则','纲要','解释')
+    if title and len(texts) > 1 and not re.search(r'[。，,.]', title) and (
+            len(title) <= 10 or (len(title) <= 30 and not title.endswith(DOC_SUFFIX))):
         nxt = texts[1]
-        if len(nxt) <= 40 and not re.search(r'[。]', nxt) and not nxt.startswith(('第','（','(')):
+        if len(nxt) <= 40 and not re.search(r'[。]', nxt) and not nxt.startswith(('第','（','('))                 and (title + nxt).endswith(DOC_SUFFIX):
             title = title + nxt
     tsrc = 'first_para'
     if not title or len(title) > 60 or title.endswith('。'):
