@@ -13,6 +13,9 @@ from lawrag.eval import load_testset, _expected_files, _contains_key
 from lawrag.cli import get_retriever
 from lawrag.generator import Generator
 
+# 2026-07-13: cite_ok 逻辑必须跟 lawrag/eval.py::eval_full 保持一致(结构化 file_name/doc_title
+# 比对,取代对渲染后引用文本的子串匹配),否则本脚本算出的细节数据会跟 CLI 的真实结果对不上。
+
 META = os.environ['LAWRAG_META']
 ts = load_testset(os.path.join(META, 'testset_v1.jsonl'))
 r = get_retriever('bm25')
@@ -31,8 +34,11 @@ for q in ts:
         key_ok = None
     else:
         exp_files = _expected_files(q)
-        cite_ok = all(any(ef in c for c in ans.citations) for ef in exp_files) or \
-            any(q.get('expected_source', {}).get('doc_title', '§') in c for c in ans.citations)
+        hit_files_set = set(hit_files)
+        hit_titles = {h.chunk.doc_title for h in hits if h.chunk.doc_title}
+        exp_title = (q.get('expected_source') or {}).get('doc_title', '')
+        cite_ok = all(ef in hit_files_set for ef in exp_files) or \
+            any(exp_title and (exp_title in t or t in exp_title) for t in hit_titles)
         key_ok = _contains_key(q, ans.text)
         ok = bool(cite_ok and key_ok and not ans.refused)
     row = {
