@@ -76,9 +76,11 @@ class Generator:
             raise RuntimeError('未配置 LAWRAG_LLM_API_KEY,无法调用 LLM。'
                                '检索与引用链路可用 cli.py search 验证。')
         text = self._call_llm(self.build_prompt(query, usable))
-        # 修复(eval 2026-07-12 发现1):LLM 生成阶段自主拒答必须置 refused 并清空引用,
-        # 否则拒答语下挂无关引用 => 违反「引用错=最高级事故」
-        if REFUSE_NO_HIT.rstrip('。') in text.replace(' ', '')[:40]:
+        # 修复(eval 2026-07-12 发现1,2026-07-13 补丁):LLM 生成阶段自主拒答必须置 refused 并清空引用,
+        # 否则拒答语下挂无关引用 => 违反「引用错=最高级事故」。
+        # LLM 输出用全角逗号"，"而 REFUSE_NO_HIT 字面量是半角","，先归一化再比对,否则子串匹配必然失败。
+        norm = text.replace(' ', '')[:40].replace('，', ',')
+        if REFUSE_NO_HIT.rstrip('。').replace('，', ',') in norm:
             return Answer(REFUSE_NO_HIT, [], refused=True)
         return Answer(text=text,
                       citations=[h.chunk.citation() for h in usable],
