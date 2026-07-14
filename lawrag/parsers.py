@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Parser 层 (§4)。每格式一个类,输出 DocElement 流;metadata 只增不减。
-docx→python-docx (D-13 spike 验证);xlsx→openpyxl 自写 (R4/R5);Unstructured 出局 (D-12)。"""
+"""Parser 层 (§4)。2026-07-13: XlsxParser 补回表注行过滤(M05/X03)。"""
 import os
 import re
 from .schema import DocElement, Location
@@ -13,13 +12,9 @@ def _clean(s: str) -> str:
     return INVIS.sub('', s).strip()
 
 
-# ---------------- 法律结构通用组装 ----------------
-
-def law_elements(paras: list[str], doc_title: str) -> list[DocElement]:
-    """任何格式的正文段落,命中法律结构后统一走这里 (§7 结构探测路由)。"""
+def law_elements(paras, doc_title):
     skip = L.strip_toc(paras)
-    els: list[DocElement] = []
-    hpath: list[str] = [doc_title] if doc_title else []
+    els = []
     cur_ch = cur_jie = None
     seq = 0
     for i, t in enumerate(paras):
@@ -35,32 +30,29 @@ def law_elements(paras: list[str], doc_title: str) -> list[DocElement]:
             cur_jie = t_sp
             els.append(DocElement('heading', t_sp, Location(
                 heading_path=base + [x for x in (cur_ch, t_sp) if x], paragraph_seq=seq)))
-        elif (m := L.RE_TIAO.match(t)):
-            els.append(DocElement('article', t_sp, Location(
-                heading_path=base + [x for x in (cur_ch, cur_jie) if x],
-                article_no=m.group(1), paragraph_seq=seq)))
         else:
-            els.append(DocElement('paragraph', t_sp, Location(
-                heading_path=base + [x for x in (cur_ch, cur_jie) if x],
-                paragraph_seq=seq, anchor_text=t_sp[:20])))
+            m = L.RE_TIAO.match(t)
+            if m:
+                els.append(DocElement('article', t_sp, Location(
+                    heading_path=base + [x for x in (cur_ch, cur_jie) if x],
+                    article_no=m.group(1), paragraph_seq=seq)))
+            else:
+                els.append(DocElement('paragraph', t_sp, Location(
+                    heading_path=base + [x for x in (cur_ch, cur_jie) if x],
+                    paragraph_seq=seq, anchor_text=t_sp[:20])))
     return els
 
 
-# ---------------- 各格式 Parser ----------------
-
 class DocxParser:
-    def parse(self, path: str, doc_title: str = '') -> list[DocElement]:
+    def parse(self, path, doc_title=''):
         from docx import Document
         d = Document(path)
-        # 文档序遍历:body 级 walk,保持表格与段落相对位置 (竞赛代码教训)
-        paras: list[str] = []
-        tables_by_pos: list[tuple[int, object]] = []
-        body = d.element.body
+        paras = []
+        tables_by_pos = []
         ti = 0
-        for child in body.iterchildren():
+        for child in d.element.body.iterchildren():
             tag = child.tag.rsplit('}', 1)[-1]
             if tag == 'p':
-                # 通过 xml 拿文本(含 run 合并)
                 txt = _clean(''.join(node.text or '' for node in child.iter()
                                      if node.tag.endswith('}t')))
                 if txt:
@@ -71,18 +63,16 @@ class DocxParser:
         if L.is_law_structured(paras):
             els = law_elements(paras, doc_title)
         else:
-            els = []
-            for seq, t in enumerate(paras, 1):
-                els.append(DocElement('paragraph', t, Location(paragraph_seq=seq, anchor_text=t[:20])))
-        # 内嵌表格:行级元素,挂在其位置附近
+            els = [DocElement('paragraph', t, Location(paragraph_seq=s, anchor_text=t[:20]))
+                   for s, t in enumerate(paras, 1)]
         for pos, tb in tables_by_pos:
             hdr = [_clean(c.text) for c in tb.rows[0].cells] if tb.rows else []
             for ri, row in enumerate(tb.rows[1:], 1):
                 cells = [_clean(c.text) for c in row.cells]
-                text = ' | '.join(f'{h}={v}' if h else v for h, v in zip(hdr, cells) if v)
+                text = ' | '.join(('%s=%s' % (h, v)) if h else v for h, v in zip(hdr, cells) if v)
                 if text:
                     els.append(DocElement('table_row', text, Location(
-                        table_index=1, row_range=f'r{ri}', column_names=hdr or None,
+                        table_index=1, row_range='r%d' % ri, column_names=hdr or None,
                         paragraph_seq=pos)))
         return els
 
@@ -90,7 +80,7 @@ class DocxParser:
 class TxtParser:
     HEADER_KEYS = ('标题：', '栏目：', '发布日期：', '来源：', '原文链接：')
 
-    def parse(self, path: str, doc_title: str = '') -> list[DocElement]:
+    def parse(self, path, doc_title=''):
         raw = open(path, encoding='utf-8', errors='replace').read()
         m = re.search(r'^正文：\s*$', raw, re.M)
         body = raw[m.end():] if m else raw
@@ -104,9 +94,8 @@ class TxtParser:
 
 
 class MdParser:
-    def parse(self, path: str, doc_title: str = '') -> list[DocElement]:
+    def parse(self, path, doc_title=''):
         lines = open(path, encoding='utf-8').read().split('\n')
-        # front matter
         fm = {}
         if lines and lines[0].strip() == '---':
             try:
@@ -118,10 +107,10 @@ class MdParser:
                 lines = lines[end + 1:]
             except ValueError:
                 pass
-        els: list[DocElement] = []
-        hstack: list[tuple[int, str]] = []
+        els = []
+        hstack = []
         seq = 0
-        table_hdr: list[str] | None = None
+        table_hdr = None
         ti = 0
         for ln in lines:
             t = ln.rstrip()
@@ -145,15 +134,15 @@ class MdParser:
                     table_hdr = cells
                     ti += 1
                     continue
-                text = ' | '.join(f'{h}={v}' for h, v in zip(table_hdr, cells) if v)
+                text = ' | '.join('%s=%s' % (h, v) for h, v in zip(table_hdr, cells) if v)
                 els.append(DocElement('table_row', text, Location(
                     heading_path=hp, sheet_name=fm.get('sheet_name'),
-                    table_index=ti, row_range=f'r{seq}', column_names=table_hdr,
+                    table_index=ti, row_range='r%d' % seq, column_names=table_hdr,
                     column_names_confidence=fm.get('column_names_confidence', 'ok'),
                     paragraph_seq=seq)))
                 continue
             table_hdr = None
-            body = re.sub(r'^[-*]\s+', '', t.strip())
+            body = re.sub(r'^[-*>]\s+', '', t.strip())
             m = L.RE_TIAO.match(body)
             els.append(DocElement('article' if m else 'paragraph', body, Location(
                 heading_path=hp, article_no=m.group(1) if m else None,
@@ -162,12 +151,12 @@ class MdParser:
 
 
 class XlsxParser:
-    """R4/R5 实现,移植自 x2md spike v4:签名法表头检测/合并展开/数值行不进表头/列序号行丢弃。"""
+    """R4/R5 + 表注行过滤(2026-07-13,M05/X03 检索缺口主因)。"""
 
-    def parse(self, path: str, doc_title: str = '') -> list[DocElement]:
+    def parse(self, path, doc_title=''):
         import openpyxl
         wb = openpyxl.load_workbook(path, data_only=True)
-        els: list[DocElement] = []
+        els = []
         for ws in wb.worksheets:
             els.extend(self._sheet(ws))
         wb.close()
@@ -181,9 +170,9 @@ class XlsxParser:
             return 'N'
         return 'N' if re.match(r'^-?[\d,，.%\s]+$', str(v).strip()) else 'T'
 
-    def _sheet(self, ws) -> list[DocElement]:
+    def _sheet(self, ws):
         from collections import Counter
-        for rng in list(ws.merged_cells.ranges):                     # R5 展开回填
+        for rng in list(ws.merged_cells.ranges):
             v = ws.cell(rng.min_row, rng.min_col).value
             ws.unmerge_cells(str(rng))
             for r in range(rng.min_row, rng.max_row + 1):
@@ -207,7 +196,7 @@ class XlsxParser:
                 continue
             vals = [v for v in rows[i] if v is not None and str(v).strip()]
             if sum(1 for v in vals if self._cell_type(v) == 'N') / len(vals) > 0.3:
-                continue                                             # 合计/序号行不进表头
+                continue
             if len(set(str(v).strip() for v in vals)) > 2:
                 header_rows.append(i)
         headers = []
@@ -219,25 +208,33 @@ class XlsxParser:
                     parts.append(s)
             headers.append('.'.join(parts))
         conf = 'ok' if header_rows and len(header_rows) <= 3 and \
-            sum(1 for h in headers if not h) < len(headers) * 0.3 else 'uncertain'   # R4 降级
+            sum(1 for h in headers if not h) < len(headers) * 0.3 else 'uncertain'
         els, ti, streak = [], 1, 0
         for ri, r in enumerate(rows[data_start:], data_start + 1):
             vals = ['' if v is None else str(v).strip() for v in r]
             if not any(vals):
                 streak += 1
                 if streak == 2:
-                    ti += 1                                          # R5 纵向分表
+                    ti += 1
                 continue
             streak = 0
             nums = [v for v in vals if re.fullmatch(r'\d{1,3}', v)]
             ne = [v for v in vals if v]
             if len(nums) >= 3 and len(nums) >= len(ne) - 1 and \
                     [int(v) for v in nums] == list(range(int(nums[0]), int(nums[0]) + len(nums))):
-                continue                                             # 列序号行
-            text = ' | '.join(f'{h}={v}' if h else v
-                              for h, v in zip(headers, vals) if v)
+                continue
+            sig = ''.join(self._cell_type(v) for v in r)
+            # 表注判据:签名偏离数据签名,且 (宽表中非空格<=2 | 整行同值重复 | 长文本)
+            # ——宽表(>=4列)的数据行不可能只有1-2个非空格;单细胞脚注由此捕获
+            if sig != data_sig and len(set(ne)) <= 2 and (
+                    (len(vals) >= 4 and len(ne) <= 2) or len(ne) >= 3
+                    or max(len(v) for v in ne) > 30):
+                els.append(DocElement('paragraph', ne[0], Location(
+                    sheet_name=ws.title, table_index=ti, anchor_text=ne[0][:20])))
+                continue
+            text = ' | '.join(('%s=%s' % (h, v)) if h else v for h, v in zip(headers, vals) if v)
             els.append(DocElement('table_row', text, Location(
-                sheet_name=ws.title, table_index=ti, row_range=f'r{ri}',
+                sheet_name=ws.title, table_index=ti, row_range='r%d' % ri,
                 column_names=[h for h in headers if h] or None,
                 column_names_confidence=conf)))
         return els
@@ -247,9 +244,9 @@ PARSERS = {'docx': DocxParser, 'doc': DocxParser, 'doc_converted': DocxParser,
            'txt': TxtParser, 'md': MdParser, 'xlsx': XlsxParser}
 
 
-def route(file_path: str, fmt: str | None = None):
+def route(file_path, fmt=None):
     fmt = fmt or os.path.splitext(file_path)[1].lstrip('.').lower()
     cls = PARSERS.get(fmt)
     if cls is None:
-        raise ValueError(f'不支持的格式: {fmt} ({file_path})')
+        raise ValueError('不支持的格式: %s (%s)' % (fmt, file_path))
     return cls()

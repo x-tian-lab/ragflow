@@ -15,6 +15,26 @@ def load_testset(path: str) -> list[dict]:
     return [json.loads(l) for l in open(path, encoding='utf-8') if l.strip()]
 
 
+def _load_equivalence(meta_dir):
+    """等价来源映射(2026-07-13):合成 md 与其源 xlsx/docx 为内容孪生,检索到任一视为命中。
+    外挂文件,不修改冻结的 testset(遵守冻结规则:只增不改)。"""
+    import os
+    p = os.path.join(meta_dir or '', 'source_equivalence.json')
+    if meta_dir and os.path.exists(p):
+        eq = json.load(open(p, encoding='utf-8'))
+        full = {}
+        for k, vs in eq.items():
+            full.setdefault(k, set()).update(vs)
+            for v in vs:
+                full.setdefault(v, set()).add(k)
+        return {k: v | {k} for k, v in full.items()}
+    return {}
+
+
+def _file_hit(ef, hit_files, eq):
+    return any(h in eq.get(ef, {ef}) for h in hit_files)
+
+
 def _expected_files(q: dict) -> list[str]:
     src = q.get('expected_source')
     if not src:
@@ -29,7 +49,9 @@ def _expected_article(q: dict) -> str | None:
     return m.group(0) if m else None
 
 
-def eval_retrieval(retriever, testset: list[dict], k: int = 5, log=print) -> dict:
+def eval_retrieval(retriever, testset: list[dict], k: int = 5, log=print,
+                   meta_dir: str = None) -> dict:
+    eq = _load_equivalence(meta_dir)
     n = file_hit = loc_hit = 0
     per_format = {}
     misses = []
@@ -44,11 +66,12 @@ def eval_retrieval(retriever, testset: list[dict], k: int = 5, log=print) -> dic
                                   include_history=(q.get('qtype') == 'version'))
         ms = (time.time() - t0) * 1000
         hit_files = [h.chunk.file_name for h in hits]
-        f_ok = all(any(ef == hf for hf in hit_files) for ef in exp_files) if exp_files else False
+        f_ok = all(_file_hit(ef, hit_files, eq) for ef in exp_files) if exp_files else False
         l_ok = f_ok
         if f_ok and exp_art:
+            ok_files = set().union(*[eq.get(ef, {ef}) for ef in exp_files])
             l_ok = any(h.chunk.location.article_no == exp_art for h in hits
-                       if h.chunk.file_name in exp_files)
+                       if h.chunk.file_name in ok_files)
         file_hit += f_ok
         loc_hit += l_ok
         st = per_format.setdefault(q['format'], [0, 0, 0])
@@ -68,7 +91,8 @@ def eval_retrieval(retriever, testset: list[dict], k: int = 5, log=print) -> dic
 
 
 def eval_full(retriever, generator, testset: list[dict], k: int = 5,
-              judge=None, log=print) -> dict:
+              judge=None, log=print, meta_dir: str = None) -> dict:
+    eq = _load_equivalence(meta_dir)
     """完整评测:引用错 = 判负 (D-05)。judge 缺省用关键串粗判,正式验收应人工复核。"""
     rows = []
     for q in testset:
@@ -87,7 +111,7 @@ def eval_full(retriever, generator, testset: list[dict], k: int = 5,
             hit_files = {h.chunk.file_name for h in hits}
             hit_titles = {h.chunk.doc_title for h in hits if h.chunk.doc_title}
             exp_title = (q.get('expected_source') or {}).get('doc_title', '')
-            cite_ok = all(ef in hit_files for ef in exp_files) or \
+            cite_ok = all(_file_hit(ef, hit_files, eq) for ef in exp_files) or \
                 any(exp_title and (exp_title in t or t in exp_title) for t in hit_titles)
             key_ok = judge(q, ans.text) if judge else _contains_key(q, ans.text)
             ok = bool(cite_ok and key_ok and not ans.refused)   # 引用错=判负

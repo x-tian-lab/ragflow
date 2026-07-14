@@ -71,10 +71,27 @@ def cmd_eval(args):
     ts = load_testset(os.path.join(META, args.testset))
     r = get_retriever(args.retriever)
     if args.mode == 'retrieval':
-        eval_retrieval(r, ts, k=args.k)
-    else:
-        from .generator import Generator
-        eval_full(r, Generator(), ts, k=args.k)
+        eval_retrieval(r, ts, k=args.k, meta_dir=META)
+        return
+    from .generator import Generator
+    judge = None
+    if args.judge == 'llm':
+        from .judge import LLMJudge
+        judge = LLMJudge(cache_path=os.path.join(META, 'judge_cache.json'))
+    res = eval_full(r, Generator(), ts, k=args.k, judge=judge, meta_dir=META)
+    if judge is not None:
+        import json as _j
+        print('judge 统计:', _j.dumps(judge.stats(), ensure_ascii=False))
+
+
+def cmd_calibrate(args):
+    """judge 上岗前的校准门(judge.py 规则4):一致率>=阈值才可用于回归。"""
+    from .judge import LLMJudge, calibrate
+    judge = LLMJudge(cache_path=os.path.join(META, 'judge_cache.json'))
+    calibrate(judge,
+              detail_path=os.path.join(META, args.detail),
+              labels_path=os.path.join(META, args.labels),
+              threshold=args.threshold)
 
 
 def main():
@@ -98,8 +115,14 @@ def main():
     pe.add_argument('--testset', default='testset_v1.jsonl')
     pe.add_argument('-k', type=int, default=5)
     pe.add_argument('--retriever', default='bm25', choices=['bm25', 'dense'])
+    pe.add_argument('--judge', default='string', choices=['string', 'llm'])
+    pc = sub.add_parser('calibrate')
+    pc.add_argument('--detail', default='eval_full_detail.json')
+    pc.add_argument('--labels', default='judge_calibration_v3.json')
+    pc.add_argument('--threshold', type=float, default=0.95)
     args = p.parse_args()
-    {'index': cmd_index, 'search': cmd_search, 'ask': cmd_ask, 'eval': cmd_eval}[args.cmd](args)
+    {'index': cmd_index, 'search': cmd_search, 'ask': cmd_ask,
+     'eval': cmd_eval, 'calibrate': cmd_calibrate}[args.cmd](args)
 
 
 if __name__ == '__main__':
