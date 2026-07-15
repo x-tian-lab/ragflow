@@ -209,7 +209,7 @@ class XlsxParser:
             headers.append('.'.join(parts))
         conf = 'ok' if header_rows and len(header_rows) <= 3 and \
             sum(1 for h in headers if not h) < len(headers) * 0.3 else 'uncertain'
-        els, ti, streak = [], 1, 0
+        els, ti, streak, last_note, last_note_ri = [], 1, 0, None, None
         for ri, r in enumerate(rows[data_start:], data_start + 1):
             vals = ['' if v is None else str(v).strip() for v in r]
             if not any(vals):
@@ -229,9 +229,16 @@ class XlsxParser:
             if sig != data_sig and len(set(ne)) <= 2 and (
                     (len(vals) >= 4 and len(ne) <= 2) or len(ne) >= 3
                     or max(len(v) for v in ne) > 30):
+                # 长脚注常因合并单元格跨多行渲染,解并后逐行重复取值——仅紧邻行合并为一条(2026-07-14)
+                if ne[0] == last_note and ri == last_note_ri + 1:
+                    last_note_ri = ri
+                    continue
                 els.append(DocElement('paragraph', ne[0], Location(
-                    sheet_name=ws.title, table_index=ti, anchor_text=ne[0][:20])))
+                    sheet_name=ws.title, table_index=ti, paragraph_seq=ri,
+                    anchor_text=ne[0][:20])))
+                last_note, last_note_ri = ne[0], ri
                 continue
+            last_note, last_note_ri = None, None   # 普通数据行打断脚注连续性
             text = ' | '.join(('%s=%s' % (h, v)) if h else v for h, v in zip(headers, vals) if v)
             els.append(DocElement('table_row', text, Location(
                 sheet_name=ws.title, table_index=ti, row_range='r%d' % ri,

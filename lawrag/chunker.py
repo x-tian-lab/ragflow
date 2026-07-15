@@ -73,7 +73,7 @@ class Chunker:
 
         def emit(text: str, loc: Location, suffix: str = ''):
             cid = hashlib.sha1(f'{doc_id}|{loc.article_no}|{loc.paragraph_seq}|'
-                               f'{loc.sheet_name}|{loc.row_range}|{suffix}|{text[:32]}'
+                               f'{loc.sheet_name}|{loc.row_range}|{suffix}|{text}'
                                .encode()).hexdigest()[:16]
             c = Chunk(chunk_id=cid, doc_id=doc_id, doc_version=doc_version,
                       file_name=file_name, doc_title=doc_title, format=fmt,
